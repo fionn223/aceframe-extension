@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 300px;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #fff;
+      color: #111;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .logo {
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+    }
+    .logo img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
+    .header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+    }
+    .status {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 20px;
+    }
+    .status.recording {
+      color: #F00078;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status.recording::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      background: #F00078;
+      border-radius: 50%;
+      animation: pulse 1.5s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    .step-count {
+      font-size: 36px;
+      font-weight: 700;
+      color: #F00078;
+      letter-spacing: -1px;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .step-label {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 20px;
+    }
+    button {
+      width: 100%;
+      padding: 11px 16px;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      letter-spacing: -0.1px;
+    }
+    .btn-start {
+      background: #F00078;
+      color: #fff;
+    }
+    .btn-start:hover { background: #D40065; }
+    .btn-stop {
+      background: #111;
+      color: #fff;
+    }
+    .btn-stop:hover { background: #333; }
+    .btn-start:disabled, .btn-stop:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .hint {
+      text-align: center;
+      font-size: 11px;
+      color: #bbb;
+      margin-top: 14px;
+      line-height: 1.4;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo"><img src="icons/icon128.png" alt="Aceframe"></div>
+    <h1>Aceframe</h1>
+  </div>
+
+  <div id="idle-state">
+    <p class="status">Ready to capture a demo</p>
+    <button id="btn-start" class="btn-start">Start Recording</button>
+    <p class="hint">Click anywhere on the page to capture steps</p>
+  </div>
+
+  <div id="recording-state" style="display: none;">
+    <p class="status recording">Recording</p>
+    <div class="step-count" id="step-count">0</div>
+    <div class="step-label">steps captured</div>
+    <button id="btn-stop" class="btn-stop">Stop & Edit</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
