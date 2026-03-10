@@ -4,123 +4,561 @@
   <meta charset="UTF-8">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
     body {
-      width: 300px;
-      padding: 24px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
       background: #fff;
       color: #111;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
     }
+
+    /* ── Header ── */
     .header {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 20px;
+      padding: 16px 20px 0 20px;
     }
-    .logo {
-      width: 28px;
-      height: 28px;
-      flex-shrink: 0;
-    }
-    .logo img {
-      width: 28px;
-      height: 28px;
+    .header img {
+      width: 26px;
+      height: 26px;
       border-radius: 6px;
     }
     .header h1 {
-      font-size: 15px;
-      font-weight: 600;
-      letter-spacing: -0.2px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #111;
     }
-    .status {
-      font-size: 13px;
-      color: #888;
-      margin-bottom: 20px;
+
+    /* ── Sections ── */
+    .section {
+      padding: 20px;
     }
-    .status.recording {
-      color: #F00078;
-      font-weight: 500;
+
+    /* ── Welcome State ── */
+    .welcome-card {
+      text-align: center;
+      padding: 8px 0 0;
+    }
+    .welcome-card .welcome-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 16px;
+      background: linear-gradient(135deg, #1C6AE6 0%, #4F8FF7 100%);
+      border-radius: 14px;
       display: flex;
       align-items: center;
-      gap: 6px;
+      justify-content: center;
     }
-    .status.recording::before {
-      content: '';
-      width: 6px;
-      height: 6px;
-      background: #F00078;
+    .welcome-card .welcome-icon svg {
+      width: 24px;
+      height: 24px;
+      color: #fff;
+    }
+    .welcome-card h2 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 8px;
+    }
+    .welcome-card p {
+      font-size: 13px;
+      color: #6B7280;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    /* ── Sign-in State ── */
+    .signin-card {
+      text-align: center;
+      padding: 8px 0 0;
+    }
+    .signin-card img {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+    .signin-card h2 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+    .signin-card > p {
+      font-size: 13px;
+      color: #6B7280;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    /* ── Idle State ── */
+    .idle-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .idle-dot {
+      width: 7px;
+      height: 7px;
+      background: #22C55E;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .idle-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #6B7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .capture-card {
+      background: linear-gradient(135deg, #1C6AE6 0%, #2D7BF0 100%);
+      border-radius: 12px;
+      padding: 20px;
+      color: #fff;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .capture-card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 24px rgba(28, 106, 230, 0.3);
+    }
+    .capture-card:active {
+      transform: translateY(0);
+    }
+    .capture-card h3 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .capture-card p {
+      font-size: 12px;
+      opacity: 0.8;
+      font-weight: 400;
+    }
+    .capture-card .card-icon {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0.3;
+    }
+
+    .secondary-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 0;
+    }
+    .secondary-option {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 12px 12px;
+      background: #F9FAFB;
+      border: 1px solid #E5E7EB;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+    }
+    .secondary-option:hover {
+      background: #F3F4F6;
+      border-color: #D1D5DB;
+    }
+    .secondary-option:active {
+      background: #E5E7EB;
+    }
+    .secondary-option svg {
+      flex-shrink: 0;
+      color: #6B7280;
+    }
+    .secondary-option:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* ── Recording State ── */
+    .recording-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .rec-dot {
+      width: 8px;
+      height: 8px;
+      background: #EF4444;
       border-radius: 50%;
       animation: pulse 1.5s ease-in-out infinite;
       flex-shrink: 0;
     }
+    .rec-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #EF4444;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .rec-label.paused {
+      color: #6B7280;
+    }
+    .rec-dot.paused {
+      background: #6B7280;
+      animation: none;
+    }
+
+    .step-display {
+      text-align: center;
+      margin-bottom: 20px;
+    }
     .step-count {
-      font-size: 36px;
-      font-weight: 700;
-      color: #F00078;
-      letter-spacing: -1px;
+      font-size: 48px;
+      font-weight: 800;
+      color: #1C6AE6;
+      letter-spacing: -2px;
       line-height: 1;
       margin-bottom: 4px;
     }
     .step-label {
       font-size: 12px;
-      color: #999;
-      margin-bottom: 20px;
+      color: #9CA3AF;
+      font-weight: 500;
     }
-    button {
+
+    .progress-bar {
       width: 100%;
-      padding: 11px 16px;
+      height: 3px;
+      background: #F3F4F6;
+      border-radius: 2px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #1C6AE6, #4F8FF7);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .progress-bar-fill.recording {
+      animation: progressPulse 2s ease-in-out infinite;
+    }
+
+    /* ── Video State ── */
+    .video-timer {
+      font-size: 40px;
+      font-weight: 800;
+      color: #EF4444;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -1px;
+      line-height: 1;
+      text-align: center;
+      margin-bottom: 4px;
+    }
+
+    /* ── Buttons ── */
+    .btn-primary {
+      width: 100%;
+      padding: 12px 16px;
+      background: #1C6AE6;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      letter-spacing: -0.1px;
+    }
+    .btn-primary:hover { background: #1558C7; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-dark {
+      width: 100%;
+      padding: 12px 16px;
+      background: #111827;
+      color: #fff;
       border: none;
       border-radius: 10px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
-      letter-spacing: -0.1px;
     }
-    .btn-start {
-      background: #F00078;
-      color: #fff;
-    }
-    .btn-start:hover { background: #D40065; }
-    .btn-stop {
-      background: #111;
-      color: #fff;
-    }
-    .btn-stop:hover { background: #333; }
-    .btn-start:disabled, .btn-stop:disabled {
+    .btn-dark:hover { background: #1F2937; }
+    .btn-dark:active { transform: scale(0.98); }
+    .btn-dark:disabled {
       opacity: 0.4;
       cursor: not-allowed;
+      transform: none;
     }
+
+    .btn-ghost {
+      width: 100%;
+      padding: 10px 16px;
+      background: none;
+      color: #9CA3AF;
+      border: none;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color 0.15s ease;
+    }
+    .btn-ghost:hover { color: #EF4444; }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .btn-row button { flex: 1; }
+
+    .btn-pause {
+      width: 100%;
+      padding: 12px 16px;
+      background: #F3F4F6;
+      color: #374151;
+      border: 1px solid #E5E7EB;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-pause:hover { background: #E5E7EB; }
+    .btn-pause.resumed {
+      background: #1C6AE6;
+      color: #fff;
+      border-color: #1C6AE6;
+    }
+    .btn-pause.resumed:hover { background: #1558C7; }
+
+    /* ── Footer ── */
+    .footer {
+      padding: 12px 20px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid #F3F4F6;
+    }
+    .footer a {
+      font-size: 12px;
+      color: #1C6AE6;
+      text-decoration: none;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .footer a:hover { opacity: 0.7; }
+    .footer .brand {
+      font-size: 10px;
+      color: #D1D5DB;
+      font-weight: 500;
+    }
+
+    /* ── Hint text ── */
     .hint {
       text-align: center;
-      font-size: 11px;
-      color: #bbb;
+      font-size: 12px;
+      color: #9CA3AF;
       margin-top: 14px;
-      line-height: 1.4;
+      line-height: 1.5;
     }
+    .hint a {
+      color: #1C6AE6;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .hint a:hover { text-decoration: underline; }
+
+    /* ── Animations ── */
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.3; }
     }
+
+    @keyframes progressPulse {
+      0% { width: 10%; }
+      50% { width: 90%; }
+      100% { width: 10%; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .state-enter {
+      animation: fadeIn 0.2s ease forwards;
+    }
+
+    /* ── Error ── */
+    .error-msg {
+      color: #EF4444;
+      font-size: 11px;
+      margin-top: 12px;
+      line-height: 1.4;
+      text-align: center;
+      padding: 8px 12px;
+      background: #FEF2F2;
+      border-radius: 8px;
+    }
   </style>
 </head>
 <body>
+
+  <!-- Header (always visible) -->
   <div class="header">
-    <div class="logo"><img src="icons/icon128.png" alt="Aceframe"></div>
+    <img src="icons/icon128.png" alt="Aceframe">
     <h1>Aceframe</h1>
   </div>
 
-  <div id="idle-state">
-    <p class="status">Ready to capture a demo</p>
-    <button id="btn-start" class="btn-start">Start Recording</button>
-    <p class="hint">Click anywhere on the page to capture steps</p>
+  <!-- Welcome State (first install) -->
+  <div id="welcome-state" class="section" style="display: none;">
+    <div class="welcome-card state-enter">
+      <div class="welcome-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <h2>Welcome to Aceframe!</h2>
+      <p>Create interactive demos in seconds. Navigate to any page and click "Capture Demo" to get started.</p>
+      <button id="btn-welcome-dismiss" class="btn-primary">Got it</button>
+    </div>
   </div>
 
-  <div id="recording-state" style="display: none;">
-    <p class="status recording">Recording</p>
-    <div class="step-count" id="step-count">0</div>
-    <div class="step-label">steps captured</div>
-    <button id="btn-stop" class="btn-stop">Stop & Edit</button>
+  <!-- Sign-in State -->
+  <div id="signin-state" class="section" style="display: none;">
+    <div class="signin-card state-enter">
+      <img src="icons/icon128.png" width="44" height="44">
+      <h2>Sign in to Aceframe</h2>
+      <p>Sign in to start creating interactive demos</p>
+      <button id="btn-signin" class="btn-primary">Sign in</button>
+      <p class="hint">Don't have an account? <a href="#" id="btn-signup">Sign up free</a></p>
+    </div>
+  </div>
+
+  <!-- Idle State -->
+  <div id="idle-state" class="section" style="display: none;">
+    <div class="state-enter">
+      <div class="idle-header">
+        <div class="idle-dot"></div>
+        <span class="idle-label">Ready</span>
+      </div>
+
+      <div class="capture-card" id="btn-html">
+        <h3>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+          Capture Demo
+        </h3>
+        <p>Captures an interactive copy of the page</p>
+        <div class="card-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="secondary-row">
+        <button class="secondary-option" id="btn-start">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+          Screenshots
+        </button>
+        <button class="secondary-option" id="btn-video">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
+          </svg>
+          Video
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recording State (Screenshots) -->
+  <div id="recording-state" class="section" style="display: none;">
+    <div class="state-enter">
+      <div class="recording-header">
+        <div class="rec-dot" id="rec-dot"></div>
+        <span class="rec-label" id="recording-status">Recording</span>
+      </div>
+
+      <div class="step-display">
+        <div class="step-count" id="step-count">0</div>
+        <div class="step-label">steps captured</div>
+      </div>
+
+      <div class="progress-bar">
+        <div class="progress-bar-fill recording" id="progress-fill"></div>
+      </div>
+
+      <div class="btn-row">
+        <button id="btn-pause" class="btn-pause">Pause</button>
+        <button id="btn-stop" class="btn-dark">Stop & Edit</button>
+      </div>
+      <button id="btn-cancel" class="btn-ghost">Cancel recording</button>
+    </div>
+  </div>
+
+  <!-- Video Recording State -->
+  <div id="video-state" class="section" style="display: none;">
+    <div class="state-enter">
+      <div class="recording-header">
+        <div class="rec-dot"></div>
+        <span class="rec-label">Recording video</span>
+      </div>
+
+      <div class="step-display">
+        <div class="video-timer" id="video-timer">0:00</div>
+        <div class="step-label">recording</div>
+      </div>
+
+      <div class="progress-bar">
+        <div class="progress-bar-fill recording"></div>
+      </div>
+
+      <div class="btn-row">
+        <button id="btn-video-stop" class="btn-dark">Stop & Edit</button>
+      </div>
+      <button id="btn-video-cancel" class="btn-ghost">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Footer (visible in idle/signin states) -->
+  <div class="footer" id="popup-footer">
+    <a href="#" id="btn-dashboard">Open Dashboard</a>
+    <span class="brand">Aceframe</span>
   </div>
 
   <script src="popup.js"></script>

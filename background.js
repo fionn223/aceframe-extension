@@ -5,6 +5,10 @@
 
 const DEFAULT_APP_URL = 'https://aceframe.ai';
 
+// In-memory cache to avoid storage reads on every tab event
+let _isRecordingCached = false;
+let _captureModeCached = 'screenshot';
+
 async function getAppUrl() {
   try {
     const result = await chrome.storage.sync.get('appUrl');
@@ -19,8 +23,28 @@ async function isRecording() {
   return result.recording || false;
 }
 
+async function isPaused() {
+  const result = await chrome.storage.local.get('paused');
+  return result.paused || false;
+}
+
 async function setRecording(value) {
+  _isRecordingCached = value;
   await chrome.storage.local.set({ recording: value });
+}
+
+async function getCaptureMode() {
+  const result = await chrome.storage.local.get('captureMode');
+  return result.captureMode || 'screenshot';
+}
+
+async function setCaptureMode(mode) {
+  _captureModeCached = mode;
+  await chrome.storage.local.set({ captureMode: mode });
+}
+
+async function setPaused(value) {
+  await chrome.storage.local.set({ paused: value });
 }
 
 async function getStepCount() {
@@ -44,23 +68,85 @@ async function addStep(step) {
   }
 }
 
+async function getHtmlStepCount() {
+  const result = await chrome.storage.local.get('htmlStepCount');
+  return result.htmlStepCount || 0;
+}
+
+async function addHtmlStep(snapshot) {
+  const count = await getHtmlStepCount();
+  const key = `htmlStep_${count}`;
+  try {
+    await chrome.storage.local.set({
+      [key]: snapshot,
+      htmlStepCount: count + 1
+    });
+    console.log(`Aceframe: Saved ${key} (htmlStepCount now ${count + 1})`);
+    return count + 1;
+  } catch (err) {
+    console.error(`Aceframe: Failed to save ${key}:`, err);
+    throw err;
+  }
+}
+
 async function clearSteps() {
   const count = await getStepCount();
-  const keys = ['stepCount', 'pendingStepCount'];
+  const htmlCount = await getHtmlStepCount();
+  const keys = ['stepCount', 'pendingStepCount', 'htmlStepCount', 'pendingHtmlStepCount', 'captureMode', 'paused'];
   for (let i = 0; i < count + 5; i++) {
     keys.push(`step_${i}`);
   }
+  for (let i = 0; i < htmlCount + 5; i++) {
+    keys.push(`htmlStep_${i}`);
+  }
   await chrome.storage.local.remove(keys);
-  console.log(`Aceframe: Cleared ${count} steps from storage`);
+  console.log(`Aceframe: Cleared ${count} steps + ${htmlCount} HTML steps from storage`);
+}
+
+async function isVideoRecording() {
+  const result = await chrome.storage.local.get('videoRecording');
+  return result.videoRecording || false;
+}
+
+async function setVideoRecording(value) {
+  await chrome.storage.local.set({ videoRecording: value });
+}
+
+// Ensure offscreen document exists for video recording
+async function ensureOffscreen() {
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+  });
+  if (contexts.length === 0) {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['USER_MEDIA'],
+      justification: 'Recording tab video for demo capture',
+    });
+  }
+}
+
+async function closeOffscreen() {
+  try {
+    await chrome.offscreen.closeDocument();
+  } catch {
+    // Already closed or never opened
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'GET_STATE':
       (async () => {
-        const recording = await isRecording();
-        const stepCount = await getStepCount();
-        sendResponse({ recording, stepCount });
+        // Batch all state reads into a single storage call
+        const state = await chrome.storage.local.get(['recording', 'paused', 'stepCount', 'videoRecording', 'captureMode']);
+        sendResponse({
+          recording: state.recording || false,
+          paused: state.paused || false,
+          stepCount: state.stepCount || 0,
+          videoRecording: state.videoRecording || false,
+          captureMode: state.captureMode || 'screenshot',
+        });
       })();
       return true;
 
@@ -69,7 +155,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log('Aceframe: Starting recording...');
         await clearSteps();
         await setRecording(true);
-        console.log('Aceframe: Recording started');
+        await setPaused(false);
+        await setCaptureMode(message.captureMode || 'screenshot');
+        console.log('Aceframe: Recording started (mode: ' + (message.captureMode || 'screenshot') + ')');
         sendResponse({ ok: true });
       })();
       return true;
@@ -78,21 +166,171 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         console.log('Aceframe: Stopping recording...');
         await setRecording(false);
+        await setPaused(false);
         sendResponse({ ok: true });
         await doStopRecording();
       })();
       return true;
 
+    case 'PAUSE_RECORDING':
+      (async () => {
+        console.log('Aceframe: Pausing recording...');
+        await setPaused(true);
+        sendResponse({ ok: true });
+        await broadcastToTabs({ type: 'PAUSE' });
+      })();
+      return true;
+
+    case 'RESUME_RECORDING':
+      (async () => {
+        console.log('Aceframe: Resuming recording...');
+        await setPaused(false);
+        sendResponse({ ok: true });
+        await broadcastToTabs({ type: 'RESUME' });
+      })();
+      return true;
+
+    case 'CANCEL_RECORDING':
+      (async () => {
+        console.log('Aceframe: Cancelling recording...');
+        await setRecording(false);
+        await setPaused(false);
+        await clearSteps();
+        sendResponse({ ok: true });
+        await broadcastToTabs({ type: 'STOP' });
+      })();
+      return true;
+
+    case 'START_VIDEO_RECORDING':
+      (async () => {
+        console.log('Aceframe: Starting video recording...');
+        try {
+          const tabId = message.tabId;
+
+          // Get a media stream ID for the target tab
+          const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+
+          // Create offscreen document for MediaRecorder
+          await ensureOffscreen();
+
+          // Tell offscreen document to start recording
+          const result = await chrome.runtime.sendMessage({
+            type: 'OFFSCREEN_START_RECORDING',
+            streamId,
+          });
+
+          if (!result.ok) {
+            throw new Error(result.error || 'Failed to start recording');
+          }
+
+          // Set video recording state + timer start time from background
+          // (popup may close before its callback fires)
+          await setVideoRecording(true);
+          await chrome.storage.local.set({ videoStartTime: Date.now() });
+          console.log('Aceframe: Video recording started');
+          sendResponse({ ok: true });
+        } catch (err) {
+          console.error('Aceframe: Video recording failed:', err);
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+
+    case 'STOP_VIDEO_RECORDING':
+      (async () => {
+        console.log('Aceframe: Stopping video recording...');
+        try {
+          // Tell offscreen to stop recording and get the video data back
+          const result = await chrome.runtime.sendMessage({
+            type: 'OFFSCREEN_STOP_RECORDING',
+          });
+
+          await setVideoRecording(false);
+          await chrome.storage.local.remove('videoStartTime');
+          await closeOffscreen();
+
+          if (!result.ok) {
+            throw new Error(result.error || 'Failed to stop recording');
+          }
+
+          console.log(`Aceframe: Video recorded (${result.sizeMB}MB, ${result.duration}s)`);
+
+          // Store video data for the bridge/web app to pick up and upload
+          // The web app will upload because it has auth cookies (we don't)
+          const pendingVideo = {
+            mediaType: 'video',
+            videoBase64: result.videoBase64, // data URL of the video
+            videoMimeType: result.videoMimeType,
+            posterDataUrl: result.posterDataUrl,
+            videoDuration: result.duration,
+          };
+          await chrome.storage.local.set({ pendingVideoStep: pendingVideo });
+
+          // If we're also in a screenshot recording, add video as a step
+          const recording = await isRecording();
+          if (recording) {
+            const step = {
+              screenshot: result.posterDataUrl,
+              click: { x: 0.5, y: 0.5 },
+              viewportWidth: 1440,
+              viewportHeight: 900,
+              pageUrl: '',
+              annotation: '',
+              zoomLevel: 1.0,
+              mediaType: 'video',
+              // videoBase64 stored separately in pendingVideoStep
+              videoDuration: result.duration,
+            };
+            const stepCount = await addStep(step);
+            sendResponse({ ok: true, stepCount });
+          } else {
+            // Standalone video - open editor
+            const appUrl = await getAppUrl();
+            await chrome.tabs.create({ url: `${appUrl}/new?source=extension&video=1` });
+            sendResponse({ ok: true });
+          }
+        } catch (err) {
+          console.error('Aceframe: Video stop failed:', err);
+          await setVideoRecording(false);
+          await chrome.storage.local.remove('videoStartTime');
+          await closeOffscreen();
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+
+    case 'CANCEL_VIDEO_RECORDING':
+      (async () => {
+        console.log('Aceframe: Cancelling video recording...');
+        await setVideoRecording(false);
+        await chrome.storage.local.remove('videoStartTime');
+        await closeOffscreen();
+        sendResponse({ ok: true });
+      })();
+      return true;
+
     case 'CAPTURE_CLICK':
       (async () => {
-        const recording = await isRecording();
-        if (!recording) {
-          console.log('Aceframe: CAPTURE_CLICK received but not recording');
+        // Batch state reads
+        const clickState = await chrome.storage.local.get(['recording', 'paused', 'captureMode']);
+        if (!clickState.recording || clickState.paused) {
+          console.log('Aceframe: CAPTURE_CLICK received but not recording or paused');
           sendResponse({ ok: false });
           return;
         }
         try {
+          const mode = clickState.captureMode || 'screenshot';
           const stepCount = await handleCaptureClick(message.data);
+
+          // If in HTML capture mode, also capture the DOM snapshot
+          if (mode === 'html' && sender.tab && sender.tab.id) {
+            try {
+              await captureHtmlSnapshot(sender.tab.id);
+            } catch (htmlErr) {
+              console.error('Aceframe: HTML capture failed (screenshot still saved):', htmlErr);
+            }
+          }
+
           sendResponse({ ok: true, stepCount });
         } catch (err) {
           console.error('Aceframe: Capture failed:', err);
@@ -103,37 +341,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// Re-inject content script when pages load during recording
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  const recording = await isRecording();
-  if (!recording) return;
-  if (changeInfo.status !== 'complete') return;
+async function broadcastToTabs(message) {
+  try {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    for (const tab of tabs) {
+      if (tab.id) {
+        chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+      }
+    }
+  } catch {}
+}
 
+// Re-inject content script when pages load during recording
+// Uses in-memory cache to avoid storage reads on every tab event
+function getRecordingFiles() {
+  const files = ['content.js'];
+  if (_captureModeCached === 'html') files.push('html-capture.js');
+  return files;
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!_isRecordingCached || changeInfo.status !== 'complete') return;
   chrome.scripting.executeScript({
     target: { tabId },
-    files: ['content.js']
+    files: getRecordingFiles()
   }).catch(() => {});
 });
 
-chrome.tabs.onCreated.addListener(async (tab) => {
-  const recording = await isRecording();
-  if (!recording) return;
-
+chrome.tabs.onCreated.addListener((tab) => {
+  if (!_isRecordingCached) return;
   if (tab.id && tab.status === 'complete') {
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ['content.js']
+      files: getRecordingFiles()
     }).catch(() => {});
   }
 });
 
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  const recording = await isRecording();
-  if (!recording) return;
-
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  if (!_isRecordingCached) return;
   chrome.scripting.executeScript({
     target: { tabId },
-    files: ['content.js']
+    files: getRecordingFiles()
   }).catch(() => {});
 });
 
@@ -155,7 +404,11 @@ async function handleCaptureClick(clickData) {
     pageTitle: clickData.pageTitle || '',
     timestamp: clickData.timestamp,
     annotation: '',
-    zoomLevel: 1.5
+    zoomLevel: 1.5,
+    elementText: clickData.elementText || '',
+    elementTag: clickData.elementTag || '',
+    elementSelector: clickData.elementSelector || '',
+    elementAriaLabel: clickData.elementAriaLabel || ''
   };
 
   const stepCount = await addStep(step);
@@ -166,6 +419,38 @@ async function handleCaptureClick(clickData) {
   }).catch(() => {});
 
   return stepCount;
+}
+
+/**
+ * Inject html-capture.js into a tab and run the capture function.
+ * Returns the snapshot object and stores it as an HTML step.
+ */
+async function captureHtmlSnapshot(tabId) {
+  // First, inject the html-capture.js script
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['html-capture.js']
+  });
+
+  // Then execute the capture function and get the result
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async () => {
+      if (typeof window.__aceframeHTMLCapture === 'function') {
+        return await window.__aceframeHTMLCapture();
+      }
+      return null;
+    }
+  });
+
+  const snapshot = results && results[0] && results[0].result;
+  if (!snapshot) {
+    throw new Error('HTML capture returned no data');
+  }
+
+  const htmlStepCount = await addHtmlStep(snapshot);
+  console.log(`Aceframe: HTML snapshot captured (${htmlStepCount} total)`);
+  return htmlStepCount;
 }
 
 async function doStopRecording() {
@@ -188,10 +473,23 @@ async function doStopRecording() {
   }
 
   try {
-    await chrome.storage.local.set({ pendingStepCount: count });
-    console.log(`Aceframe: Set pendingStepCount=${count}, opening editor...`);
+    const htmlCount = await getHtmlStepCount();
+    const mode = await getCaptureMode();
+    const storageData = { pendingStepCount: count };
+
+    if (htmlCount > 0) {
+      storageData.pendingHtmlStepCount = htmlCount;
+    }
+
+    await chrome.storage.local.set(storageData);
+    console.log(`Aceframe: Set pendingStepCount=${count}, pendingHtmlStepCount=${htmlCount}, opening editor...`);
+
     const appUrl = await getAppUrl();
-    const url = `${appUrl}/new?source=extension`;
+    const urlParams = new URLSearchParams({ source: 'extension' });
+    if (mode === 'html') {
+      urlParams.set('captureMode', 'html');
+    }
+    const url = `${appUrl}/new?${urlParams.toString()}`;
     console.log(`Aceframe: Opening ${url}`);
     await chrome.tabs.create({ url });
   } catch (err) {

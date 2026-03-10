@@ -6,8 +6,9 @@
   window.__aceframeRecording = true;
 
   let replaying = false;
+  let paused = false;
 
-  // ── Recording indicator with hoverable stop button + draggable ──
+  // ── Recording indicator with controls ──
   const indicator = document.createElement('div');
   indicator.id = 'aceframe-indicator';
   indicator.innerHTML = `
@@ -19,14 +20,14 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      background: #F00078;
+      background: #1C6AE6;
       color: #fff;
       padding: 7px 14px;
       border-radius: 20px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 12px;
       font-weight: 600;
-      box-shadow: 0 2px 16px rgba(240, 0, 120, 0.3);
+      box-shadow: 0 2px 16px rgba(28, 106, 230, 0.3);
       user-select: none;
       cursor: grab;
       letter-spacing: -0.1px;
@@ -69,6 +70,40 @@
         " title="Stop Recording"></div>
       </div>
       <span id="aceframe-label" style="transition: opacity 0.2s ease;">Recording</span>
+      <!-- Pause button -->
+      <div id="aceframe-pause-btn" style="
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease;
+        flex-shrink: 0;
+      " title="Pause">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="white">
+          <rect x="1" y="1" width="3.5" height="10" rx="0.5"/>
+          <rect x="7.5" y="1" width="3.5" height="10" rx="0.5"/>
+        </svg>
+      </div>
+      <!-- Cancel button -->
+      <div id="aceframe-cancel-btn" style="
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease;
+        flex-shrink: 0;
+      " title="Cancel recording">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round">
+          <line x1="1" y1="1" x2="9" y2="9"/>
+          <line x1="9" y1="1" x2="1" y2="9"/>
+        </svg>
+      </div>
     </div>
   `;
   document.documentElement.appendChild(indicator);
@@ -76,6 +111,9 @@
   const pill = document.getElementById('aceframe-pill');
   const stopBtn = document.getElementById('aceframe-stop-btn');
   const dot = document.getElementById('aceframe-dot');
+  const label = document.getElementById('aceframe-label');
+  const pauseBtn = document.getElementById('aceframe-pause-btn');
+  const cancelBtn = document.getElementById('aceframe-cancel-btn');
 
   // Hover: crossfade between dot and stop button (no layout shift)
   pill.addEventListener('mouseenter', () => {
@@ -84,18 +122,26 @@
     stopBtn.style.transform = 'scale(1)';
     dot.style.opacity = '0';
     dot.style.transform = 'translate(-50%, -50%) scale(0.5)';
-    pill.style.boxShadow = '0 4px 24px rgba(240, 0, 120, 0.45)';
+    pill.style.boxShadow = '0 4px 24px rgba(28, 106, 230, 0.45)';
     pill.style.transform = pill.style.transform === 'none' ? 'scale(1.03)' : 'translateY(-1px) scale(1.03)';
   });
   pill.addEventListener('mouseleave', () => {
     if (isDragging) return;
     stopBtn.style.opacity = '0';
     stopBtn.style.transform = 'scale(0.6)';
-    dot.style.opacity = '1';
+    dot.style.opacity = paused ? '0' : '1';
     dot.style.transform = 'translate(-50%, -50%) scale(1)';
-    pill.style.boxShadow = '0 2px 16px rgba(240, 0, 120, 0.3)';
+    pill.style.boxShadow = paused
+      ? '0 2px 16px rgba(156, 163, 175, 0.3)'
+      : '0 2px 16px rgba(28, 106, 230, 0.3)';
     pill.style.transform = pill.style.transform.includes('none') ? 'none' : 'translateY(0) scale(1)';
   });
+
+  // Hover effects on control buttons
+  pauseBtn.addEventListener('mouseenter', () => { pauseBtn.style.opacity = '1'; });
+  pauseBtn.addEventListener('mouseleave', () => { pauseBtn.style.opacity = '0.7'; });
+  cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.opacity = '1'; });
+  cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.opacity = '0.7'; });
 
   // ── Draggable pill ──
   let isDragging = false;
@@ -106,7 +152,7 @@
   let hasMoved = false;
 
   pill.addEventListener('mousedown', (e) => {
-    if (e.target === stopBtn) return;
+    if (e.target === stopBtn || e.target === pauseBtn || e.target === cancelBtn || e.target.closest('#aceframe-pause-btn') || e.target.closest('#aceframe-cancel-btn')) return;
     isDragging = true;
     hasMoved = false;
     dragStartX = e.clientX;
@@ -156,6 +202,63 @@
     setTimeout(cleanup, 300);
   });
 
+  // Click pause/resume button
+  pauseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (paused) {
+      chrome.runtime.sendMessage({ type: 'RESUME_RECORDING' });
+    } else {
+      chrome.runtime.sendMessage({ type: 'PAUSE_RECORDING' });
+    }
+  });
+
+  // Click cancel button — confirm before discarding steps
+  cancelBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!window.confirm('Cancel recording? All captured steps will be discarded.')) {
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'CANCEL_RECORDING' });
+    pill.style.opacity = '0';
+    pill.style.transform = 'translateY(-8px) scale(0.95)';
+    setTimeout(cleanup, 300);
+  });
+
+  // ── Pause/Resume UI state ──
+  function setPausedUI(isPaused) {
+    paused = isPaused;
+    if (isPaused) {
+      pill.style.background = '#6B7280';
+      pill.style.boxShadow = '0 2px 16px rgba(156, 163, 175, 0.3)';
+      dot.style.animation = 'none';
+      dot.style.opacity = '0';
+      label.textContent = 'Paused';
+      // Switch pause icon to play (triangle)
+      pauseBtn.innerHTML = `
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="white">
+          <polygon points="2,1 11,6 2,11"/>
+        </svg>
+      `;
+      pauseBtn.title = 'Resume';
+    } else {
+      pill.style.background = '#1C6AE6';
+      pill.style.boxShadow = '0 2px 16px rgba(28, 106, 230, 0.3)';
+      dot.style.animation = 'aceframePulse 1.5s ease-in-out infinite';
+      dot.style.opacity = '1';
+      label.textContent = 'Recording';
+      // Switch play icon back to pause (two bars)
+      pauseBtn.innerHTML = `
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="white">
+          <rect x="1" y="1" width="3.5" height="10" rx="0.5"/>
+          <rect x="7.5" y="1" width="3.5" height="10" rx="0.5"/>
+        </svg>
+      `;
+      pauseBtn.title = 'Pause';
+    }
+  }
+
   // Styles
   const style = document.createElement('style');
   style.id = 'aceframe-styles';
@@ -181,6 +284,7 @@
   // ── Click handler ──
   function handleClick(e) {
     if (replaying) return;
+    if (paused) return;
     if (e.target.closest('#aceframe-indicator')) return;
     if (hasMoved) { hasMoved = false; return; }
 
@@ -191,6 +295,20 @@
     const clickX = e.clientX;
     const clickY = e.clientY;
 
+    // Capture element metadata for Guided Mode
+    const elementText = (clickTarget.textContent || '').trim().substring(0, 200);
+    const elementTag = clickTarget.tagName?.toLowerCase() || '';
+    const elementAriaLabel = clickTarget.getAttribute('aria-label') || '';
+    let elementSelector = '';
+    try {
+      if (clickTarget.id) {
+        elementSelector = '#' + clickTarget.id;
+      } else if (clickTarget.className && typeof clickTarget.className === 'string') {
+        const classes = clickTarget.className.trim().split(/\s+/).slice(0, 3).join('.');
+        if (classes) elementSelector = elementTag + '.' + classes;
+      }
+    } catch {}
+
     const clickData = {
       x: clickX / window.innerWidth,
       y: clickY / window.innerHeight,
@@ -198,12 +316,14 @@
       viewportHeight: window.innerHeight,
       pageUrl: window.location.href,
       pageTitle: document.title,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      elementText,
+      elementTag,
+      elementSelector,
+      elementAriaLabel
     };
 
     // Hide indicator so it doesn't appear in screenshot
-    // NOTE: feedback is shown AFTER capture, not before — otherwise the
-    // pink flash circle gets baked into the screenshot ("ghost dot" bug)
     indicator.style.visibility = 'hidden';
 
     requestAnimationFrame(() => {
@@ -237,8 +357,8 @@
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: rgba(240, 0, 120, 0.2);
-      border: 2px solid rgba(240, 0, 120, 0.4);
+      background: rgba(28, 106, 230, 0.2);
+      border: 2px solid rgba(28, 106, 230, 0.4);
       pointer-events: none;
       z-index: 2147483646;
       animation: aceframeFlash 0.5s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
@@ -254,6 +374,19 @@
       pill.style.opacity = '0';
       pill.style.transform = 'translateY(-8px) scale(0.95)';
       setTimeout(cleanup, 300);
+    }
+    if (message.type === 'PAUSE') {
+      setPausedUI(true);
+    }
+    if (message.type === 'RESUME') {
+      setPausedUI(false);
+    }
+  });
+
+  // Check if we were paused before re-injection (e.g. page navigated)
+  chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
+    if (response && response.paused) {
+      setPausedUI(true);
     }
   });
 
