@@ -73,6 +73,29 @@
 
     if (steps.length === 0 && htmlSnapshots.length === 0) return;
 
+    // Merge HTML snapshots onto corresponding steps
+    if (htmlSnapshots.length > 0 && htmlSnapshots.length === steps.length) {
+      for (let i = 0; i < steps.length; i++) {
+        const snapshot = htmlSnapshots[i];
+        if (!snapshot) continue;
+        steps[i].mediaType = 'html';
+        if (snapshot.type === 'pan') {
+          // Pan step - reference a previous snapshot instead of full DOM
+          steps[i].htmlSnapshotRefIndex = snapshot.refIndex;
+          steps[i].scrollX = snapshot.scrollX || steps[i].scrollX || 0;
+          steps[i].scrollY = snapshot.scrollY || steps[i].scrollY || 0;
+        } else {
+          // Full snapshot - attach the DOM data
+          steps[i].htmlSnapshot = snapshot;
+          // Use scroll from the snapshot viewport if available
+          if (snapshot.viewport) {
+            steps[i].scrollX = steps[i].scrollX || snapshot.viewport.scrollX || 0;
+            steps[i].scrollY = steps[i].scrollY || snapshot.viewport.scrollY || 0;
+          }
+        }
+      }
+    }
+
     // Use the first step's page title as the suggested demo title
     const pageTitle = steps[0]?.pageTitle || '';
 
@@ -85,11 +108,6 @@
       capturedAt: new Date().toISOString(),
       captureMode,
     };
-
-    // Attach HTML snapshots if present
-    if (htmlSnapshots.length > 0) {
-      data.htmlSnapshots = htmlSnapshots;
-    }
 
     // Write into the DOM for the React app to read
     const el = document.createElement("script");

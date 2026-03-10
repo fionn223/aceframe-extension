@@ -8,6 +8,9 @@ const DEFAULT_APP_URL = 'https://aceframe.ai';
 // In-memory cache to avoid storage reads on every tab event
 let _isRecordingCached = false;
 let _captureModeCached = 'screenshot';
+// Track last HTML snapshot URL for same-page deduplication
+let _lastHtmlSnapshotPageUrl = null;
+let _lastHtmlSnapshotIndex = -1;
 
 async function getAppUrl() {
   try {
@@ -100,6 +103,8 @@ async function clearSteps() {
     keys.push(`htmlStep_${i}`);
   }
   await chrome.storage.local.remove(keys);
+  _lastHtmlSnapshotPageUrl = null;
+  _lastHtmlSnapshotIndex = -1;
   console.log(`Aceframe: Cleared ${count} steps + ${htmlCount} HTML steps from storage`);
 }
 
@@ -322,10 +327,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const mode = clickState.captureMode || 'screenshot';
           const stepCount = await handleCaptureClick(message.data);
 
-          // If in HTML capture mode, also capture the DOM snapshot
+          // If in HTML capture mode, capture DOM snapshot or store pan reference
           if (mode === 'html' && sender.tab && sender.tab.id) {
             try {
-              await captureHtmlSnapshot(sender.tab.id);
+              const pageUrl = message.data.pageUrl || '';
+              const isSamePage = _lastHtmlSnapshotPageUrl && pageUrl === _lastHtmlSnapshotPageUrl;
+
+              if (isSamePage && _lastHtmlSnapshotIndex >= 0) {
+                // Same page - store a lightweight pan reference instead of full snapshot
+                await addHtmlStep({
+                  type: 'pan',
+                  refIndex: _lastHtmlSnapshotIndex,
+                  scrollX: message.data.scrollX || 0,
+                  scrollY: message.data.scrollY || 0,
+                });
+                console.log(`Aceframe: Pan step stored (ref: htmlStep_${_lastHtmlSnapshotIndex})`);
+              } else {
+                // New page - capture full snapshot
+                await captureHtmlSnapshot(sender.tab.id);
+                const newIndex = (await getHtmlStepCount()) - 1;
+                _lastHtmlSnapshotPageUrl = pageUrl;
+                _lastHtmlSnapshotIndex = newIndex;
+              }
             } catch (htmlErr) {
               console.error('Aceframe: HTML capture failed (screenshot still saved):', htmlErr);
             }
@@ -403,6 +426,8 @@ async function handleCaptureClick(clickData) {
     pageUrl: clickData.pageUrl,
     pageTitle: clickData.pageTitle || '',
     timestamp: clickData.timestamp,
+    scrollX: clickData.scrollX || 0,
+    scrollY: clickData.scrollY || 0,
     annotation: '',
     zoomLevel: 1.5,
     elementText: clickData.elementText || '',
