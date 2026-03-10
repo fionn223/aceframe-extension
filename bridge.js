@@ -73,8 +73,8 @@
 
     if (steps.length === 0 && htmlSnapshots.length === 0) return;
 
-    // Merge HTML snapshots onto corresponding steps
-    if (htmlSnapshots.length > 0 && htmlSnapshots.length === steps.length) {
+    // Merge HTML snapshots onto corresponding steps (partial merge OK - some captures may have failed)
+    if (htmlSnapshots.length > 0) {
       for (let i = 0; i < steps.length; i++) {
         const snapshot = htmlSnapshots[i];
         if (!snapshot) continue;

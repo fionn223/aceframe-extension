@@ -331,7 +331,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (mode === 'html' && sender.tab && sender.tab.id) {
             try {
               const pageUrl = message.data.pageUrl || '';
-              const isSamePage = _lastHtmlSnapshotPageUrl && pageUrl === _lastHtmlSnapshotPageUrl;
+              // Compare without hash/query for more reliable same-page detection
+              const stripParams = (url) => { try { const u = new URL(url); return u.origin + u.pathname; } catch { return url; } };
+              const isSamePage = _lastHtmlSnapshotPageUrl && stripParams(pageUrl) === stripParams(_lastHtmlSnapshotPageUrl);
 
               if (isSamePage && _lastHtmlSnapshotIndex >= 0) {
                 // Same page - store a lightweight pan reference instead of full snapshot
