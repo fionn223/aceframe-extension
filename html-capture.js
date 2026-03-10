@@ -62,35 +62,6 @@
     }).join(', ');
   }
 
-  /**
-   * Try to convert an image element to a data URL.
-   * Returns the data URL or null if it fails (CORS, etc.)
-   */
-  function imageToDataUrl(img) {
-    try {
-      if (!img.complete || img.naturalWidth === 0) return null;
-      var canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      return canvas.toDataURL('image/png');
-    } catch {
-      // CORS or tainted canvas - fall back to src
-      return null;
-    }
-  }
-
-  /**
-   * Try to capture canvas element content as a data URL
-   */
-  function canvasToDataUrl(canvasEl) {
-    try {
-      return canvasEl.toDataURL('image/png');
-    } catch {
-      return null;
-    }
-  }
 
   /**
    * Serialize a single DOM node into our JSON format.
@@ -199,23 +170,9 @@
       }
     }
 
-    // Handle special elements
-    if (tag === 'canvas') {
-      var dataUrl = canvasToDataUrl(el);
-      if (dataUrl) {
-        // Replace canvas with an image of its contents
-        result.canvasDataUrl = dataUrl;
-      }
-    }
+    // Canvas elements: skip data URL inlining to keep snapshot small
 
-    if (tag === 'img') {
-      // Try to inline small images, keep src for larger ones
-      var imgDataUrl = imageToDataUrl(el);
-      if (imgDataUrl && imgDataUrl.length < 100000) {
-        // Only inline if under ~100KB to keep snapshot size manageable
-        result.inlineDataUrl = imgDataUrl;
-      }
-    }
+    // Images use their absolute src URL; no inlining to keep snapshot small
 
     // Handle style elements - capture their CSS text
     if (tag === 'style') {
