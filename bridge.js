@@ -53,9 +53,10 @@
       }
     }
 
-    // If there's a standalone video step (no screenshot steps), add it
-    if (pendingVideo && steps.length === 0) {
-      steps.push({
+    // If there's a pending video recording, pass it as a special video entry
+    // The web app will auto-split this into multiple steps using click timestamps
+    if (pendingVideo) {
+      const videoEntry = {
         order: 0,
         screenshot: pendingVideo.posterDataUrl || '',
         click: { x: 0.5, y: 0.5 },
@@ -65,10 +66,20 @@
         annotation: '',
         zoomLevel: 1.0,
         mediaType: 'video',
-        videoBase64: pendingVideo.videoBase64, // data URL - web app will upload
+        videoBase64: pendingVideo.videoBase64,
         videoMimeType: pendingVideo.videoMimeType,
         videoDuration: pendingVideo.videoDuration,
-      });
+        videoMeta: {
+          cursorTrack: pendingVideo.cursorTrack || [],
+        },
+        // Click events for step splitting - web app uses these to auto-split
+        videoClicks: pendingVideo.videoClicks || [],
+      };
+      // If there are click events, don't add to steps array directly -
+      // mark this as a video-to-split entry. The web app handles the rest.
+      if (steps.length === 0) {
+        steps.push(videoEntry);
+      }
     }
 
     if (steps.length === 0 && htmlSnapshots.length === 0) return;

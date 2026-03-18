@@ -11,6 +11,10 @@ let _captureModeCached = 'screenshot';
 // Track last HTML snapshot URL for same-page deduplication
 let _lastHtmlSnapshotPageUrl = null;
 let _lastHtmlSnapshotIndex = -1;
+// Video recording state
+let _videoRecordingTabId = null;
+let _pendingStreamId = null;
+let _videoRecordingStartedAt = null; // timestamp when actual recording started (post-countdown)
 
 async function getAppUrl() {
   try {
@@ -95,7 +99,7 @@ async function addHtmlStep(snapshot) {
 async function clearSteps() {
   const count = await getStepCount();
   const htmlCount = await getHtmlStepCount();
-  const keys = ['stepCount', 'pendingStepCount', 'htmlStepCount', 'pendingHtmlStepCount', 'captureMode', 'paused'];
+  const keys = ['stepCount', 'pendingStepCount', 'htmlStepCount', 'pendingHtmlStepCount', 'captureMode', 'paused', 'videoData', 'videoDuration', 'cursorTrack', 'videoRecordingStartedAt'];
   for (let i = 0; i < count + 5; i++) {
     keys.push(`step_${i}`);
   }
@@ -108,35 +112,34 @@ async function clearSteps() {
   console.log(`Aceframe: Cleared ${count} steps + ${htmlCount} HTML steps from storage`);
 }
 
-async function isVideoRecording() {
-  const result = await chrome.storage.local.get('videoRecording');
-  return result.videoRecording || false;
-}
+// ── Offscreen document management ──
 
-async function setVideoRecording(value) {
-  await chrome.storage.local.set({ videoRecording: value });
-}
+let _offscreenReady = false;
 
-// Ensure offscreen document exists for video recording
 async function ensureOffscreen() {
-  const contexts = await chrome.runtime.getContexts({
+  if (_offscreenReady) return;
+  // Check if offscreen document already exists
+  const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
   });
-  if (contexts.length === 0) {
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['USER_MEDIA'],
-      justification: 'Recording tab video for demo capture',
-    });
+  if (existingContexts.length > 0) {
+    _offscreenReady = true;
+    return;
   }
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['USER_MEDIA'],
+    justification: 'Recording tab video via MediaRecorder',
+  });
+  _offscreenReady = true;
+  console.log('Aceframe: Offscreen document created');
 }
 
 async function closeOffscreen() {
   try {
     await chrome.offscreen.closeDocument();
-  } catch {
-    // Already closed or never opened
-  }
+  } catch {}
+  _offscreenReady = false;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -144,13 +147,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'GET_STATE':
       (async () => {
         // Batch all state reads into a single storage call
-        const state = await chrome.storage.local.get(['recording', 'paused', 'stepCount', 'videoRecording', 'captureMode']);
+        const state = await chrome.storage.local.get(['recording', 'paused', 'stepCount', 'captureMode', 'videoRecordingStartedAt']);
         sendResponse({
           recording: state.recording || false,
           paused: state.paused || false,
           stepCount: state.stepCount || 0,
-          videoRecording: state.videoRecording || false,
           captureMode: state.captureMode || 'screenshot',
+          videoRecordingStartedAt: state.videoRecordingStartedAt || null,
         });
       })();
       return true;
@@ -167,9 +170,178 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })();
       return true;
 
+    case 'START_VIDEO_RECORDING':
+      (async () => {
+        console.log('Aceframe: Starting video recording (with countdown)...');
+        try {
+          await clearSteps();
+          await setRecording(true);
+          await setPaused(false);
+          await setCaptureMode('video');
+          _videoRecordingTabId = message.tabId;
+
+          // Pre-create offscreen document and get stream ID while countdown runs
+          const streamId = await chrome.tabCapture.getMediaStreamId({
+            targetTabId: message.tabId,
+          });
+          await ensureOffscreen();
+
+          // Store stream ID for when countdown completes
+          _pendingStreamId = streamId;
+
+          // Inject cursor tracking + countdown into the tab
+          await chrome.scripting.executeScript({
+            target: { tabId: message.tabId },
+            files: ['video-cursor.js'],
+          });
+
+          sendResponse({ ok: true });
+        } catch (err) {
+          console.error('Aceframe: Failed to start video recording', err);
+          await setRecording(false);
+          await setCaptureMode('screenshot');
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+
+    case 'VIDEO_COUNTDOWN_DONE':
+      (async () => {
+        // Countdown finished in content script - now start actual MediaRecorder
+        if (_pendingStreamId) {
+          _videoRecordingStartedAt = Date.now();
+          await chrome.storage.local.set({ videoRecordingStartedAt: _videoRecordingStartedAt });
+          chrome.runtime.sendMessage({
+            type: 'OFFSCREEN_START_RECORDING',
+            streamId: _pendingStreamId,
+          }, (response) => {
+            if (response && response.ok) {
+              console.log('Aceframe: Video recording started (post-countdown)');
+            } else {
+              console.error('Aceframe: Offscreen recording failed', response);
+            }
+          });
+          _pendingStreamId = null;
+        }
+        sendResponse({ ok: true });
+      })();
+      return true;
+
+    case 'STOP_VIDEO_RECORDING':
+      (async () => {
+        console.log('Aceframe: Stopping video recording...');
+        try {
+          // Stop cursor tracking in the tab
+          if (_videoRecordingTabId) {
+            chrome.tabs.sendMessage(_videoRecordingTabId, { type: 'STOP_CURSOR_TRACKING' }).catch(() => {});
+          }
+
+          // Stop the offscreen recorder and get the video data
+          const result = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP_RECORDING' }, resolve);
+          });
+
+          if (result && result.ok) {
+            // Get cursor track and click events from content script
+            let cursorTrack = [];
+            let videoClicks = [];
+            if (_videoRecordingTabId) {
+              try {
+                const trackResults = await chrome.scripting.executeScript({
+                  target: { tabId: _videoRecordingTabId },
+                  func: () => ({
+                    cursorTrack: window.__aceframeCursorTrack || [],
+                    videoClicks: window.__aceframeVideoClicks || [],
+                  }),
+                });
+                const data = (trackResults && trackResults[0] && trackResults[0].result) || {};
+                cursorTrack = data.cursorTrack || [];
+                videoClicks = data.videoClicks || [];
+              } catch {}
+            }
+
+            // Capture a poster frame (screenshot for thumbnail)
+            let posterDataUrl = '';
+            try {
+              posterDataUrl = await chrome.tabs.captureVisibleTab(null, {
+                format: 'jpeg',
+                quality: 85,
+              });
+            } catch {}
+
+            // Store as pendingVideoStep (matches bridge.js expected format)
+            await chrome.storage.local.set({
+              pendingVideoStep: {
+                videoBase64: result.videoDataUrl,
+                videoMimeType: result.mimeType,
+                videoDuration: result.duration,
+                posterDataUrl: posterDataUrl,
+                cursorTrack,
+                videoClicks,
+              },
+              pendingStepCount: 0,
+            });
+
+            console.log(`Aceframe: Video saved (${result.duration.toFixed(1)}s, ${(result.sizeBytes / 1024 / 1024).toFixed(1)}MB)`);
+          }
+
+          await setRecording(false);
+          await closeOffscreen();
+          _videoRecordingStartedAt = null;
+          await chrome.storage.local.remove('videoRecordingStartedAt');
+
+          // Broadcast stop to tabs
+          await broadcastToTabs({ type: 'STOP' });
+
+          // Open editor
+          const appUrl = await getAppUrl();
+          const url = `${appUrl}/new?source=extension&captureMode=video`;
+          await chrome.tabs.create({ url });
+
+          _videoRecordingTabId = null;
+          sendResponse({ ok: true });
+        } catch (err) {
+          console.error('Aceframe: Failed to stop video recording', err);
+          await setRecording(false);
+          await closeOffscreen();
+          _videoRecordingTabId = null;
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+
+    case 'CANCEL_VIDEO_RECORDING':
+      (async () => {
+        console.log('Aceframe: Cancelling video recording...');
+        try {
+          if (_videoRecordingTabId) {
+            chrome.tabs.sendMessage(_videoRecordingTabId, { type: 'STOP_CURSOR_TRACKING' }).catch(() => {});
+          }
+          chrome.runtime.sendMessage({ type: 'OFFSCREEN_CANCEL_RECORDING' }, () => {});
+          await closeOffscreen();
+        } catch {}
+        await setRecording(false);
+        await setPaused(false);
+        await clearSteps();
+        _videoRecordingTabId = null;
+        _pendingStreamId = null;
+        _videoRecordingStartedAt = null;
+        await chrome.storage.local.remove('videoRecordingStartedAt');
+        sendResponse({ ok: true });
+        await broadcastToTabs({ type: 'STOP' });
+      })();
+      return true;
+
     case 'STOP_RECORDING':
       (async () => {
         console.log('Aceframe: Stopping recording...');
+        const mode = await getCaptureMode();
+        if (mode === 'video') {
+          // Delegate to video stop handler
+          chrome.runtime.sendMessage({ type: 'STOP_VIDEO_RECORDING' });
+          sendResponse({ ok: true });
+          return;
+        }
         await setRecording(false);
         await setPaused(false);
         sendResponse({ ok: true });
@@ -198,119 +370,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'CANCEL_RECORDING':
       (async () => {
         console.log('Aceframe: Cancelling recording...');
+        const mode = await getCaptureMode();
+        if (mode === 'video') {
+          chrome.runtime.sendMessage({ type: 'CANCEL_VIDEO_RECORDING' });
+          sendResponse({ ok: true });
+          return;
+        }
         await setRecording(false);
         await setPaused(false);
         await clearSteps();
         sendResponse({ ok: true });
         await broadcastToTabs({ type: 'STOP' });
-      })();
-      return true;
-
-    case 'START_VIDEO_RECORDING':
-      (async () => {
-        console.log('Aceframe: Starting video recording...');
-        try {
-          const tabId = message.tabId;
-
-          // Get a media stream ID for the target tab
-          const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-
-          // Create offscreen document for MediaRecorder
-          await ensureOffscreen();
-
-          // Tell offscreen document to start recording
-          const result = await chrome.runtime.sendMessage({
-            type: 'OFFSCREEN_START_RECORDING',
-            streamId,
-          });
-
-          if (!result.ok) {
-            throw new Error(result.error || 'Failed to start recording');
-          }
-
-          // Set video recording state + timer start time from background
-          // (popup may close before its callback fires)
-          await setVideoRecording(true);
-          await chrome.storage.local.set({ videoStartTime: Date.now() });
-          console.log('Aceframe: Video recording started');
-          sendResponse({ ok: true });
-        } catch (err) {
-          console.error('Aceframe: Video recording failed:', err);
-          sendResponse({ ok: false, error: err.message });
-        }
-      })();
-      return true;
-
-    case 'STOP_VIDEO_RECORDING':
-      (async () => {
-        console.log('Aceframe: Stopping video recording...');
-        try {
-          // Tell offscreen to stop recording and get the video data back
-          const result = await chrome.runtime.sendMessage({
-            type: 'OFFSCREEN_STOP_RECORDING',
-          });
-
-          await setVideoRecording(false);
-          await chrome.storage.local.remove('videoStartTime');
-          await closeOffscreen();
-
-          if (!result.ok) {
-            throw new Error(result.error || 'Failed to stop recording');
-          }
-
-          console.log(`Aceframe: Video recorded (${result.sizeMB}MB, ${result.duration}s)`);
-
-          // Store video data for the bridge/web app to pick up and upload
-          // The web app will upload because it has auth cookies (we don't)
-          const pendingVideo = {
-            mediaType: 'video',
-            videoBase64: result.videoBase64, // data URL of the video
-            videoMimeType: result.videoMimeType,
-            posterDataUrl: result.posterDataUrl,
-            videoDuration: result.duration,
-          };
-          await chrome.storage.local.set({ pendingVideoStep: pendingVideo });
-
-          // If we're also in a screenshot recording, add video as a step
-          const recording = await isRecording();
-          if (recording) {
-            const step = {
-              screenshot: result.posterDataUrl,
-              click: { x: 0.5, y: 0.5 },
-              viewportWidth: 1440,
-              viewportHeight: 900,
-              pageUrl: '',
-              annotation: '',
-              zoomLevel: 1.0,
-              mediaType: 'video',
-              // videoBase64 stored separately in pendingVideoStep
-              videoDuration: result.duration,
-            };
-            const stepCount = await addStep(step);
-            sendResponse({ ok: true, stepCount });
-          } else {
-            // Standalone video - open editor
-            const appUrl = await getAppUrl();
-            await chrome.tabs.create({ url: `${appUrl}/new?source=extension&video=1` });
-            sendResponse({ ok: true });
-          }
-        } catch (err) {
-          console.error('Aceframe: Video stop failed:', err);
-          await setVideoRecording(false);
-          await chrome.storage.local.remove('videoStartTime');
-          await closeOffscreen();
-          sendResponse({ ok: false, error: err.message });
-        }
-      })();
-      return true;
-
-    case 'CANCEL_VIDEO_RECORDING':
-      (async () => {
-        console.log('Aceframe: Cancelling video recording...');
-        await setVideoRecording(false);
-        await chrome.storage.local.remove('videoStartTime');
-        await closeOffscreen();
-        sendResponse({ ok: true });
       })();
       return true;
 
@@ -380,6 +450,7 @@ async function broadcastToTabs(message) {
 // Re-inject content script when pages load during recording
 // Uses in-memory cache to avoid storage reads on every tab event
 function getRecordingFiles() {
+  if (_captureModeCached === 'video') return ['video-cursor.js'];
   const files = ['content.js'];
   if (_captureModeCached === 'html') files.push('html-capture.js');
   return files;
@@ -387,6 +458,8 @@ function getRecordingFiles() {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!_isRecordingCached || changeInfo.status !== 'complete') return;
+  // Don't re-inject video-cursor.js - it has its own guard and re-injection causes double countdown
+  if (_captureModeCached === 'video') return;
   chrome.scripting.executeScript({
     target: { tabId },
     files: getRecordingFiles()
@@ -395,6 +468,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onCreated.addListener((tab) => {
   if (!_isRecordingCached) return;
+  if (_captureModeCached === 'video') return;
   if (tab.id && tab.status === 'complete') {
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -405,6 +479,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   if (!_isRecordingCached) return;
+  if (_captureModeCached === 'video') return;
   chrome.scripting.executeScript({
     target: { tabId },
     files: getRecordingFiles()
@@ -412,7 +487,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 
 async function handleCaptureClick(clickData) {
-  // Capture as JPEG quality 85 — much smaller than PNG (200-500KB vs 2-4MB)
+  // Capture as JPEG quality 85 - much smaller than PNG (200-500KB vs 2-4MB)
   const dataUrl = await chrome.tabs.captureVisibleTab(null, {
     format: 'jpeg',
     quality: 85
@@ -431,7 +506,7 @@ async function handleCaptureClick(clickData) {
     scrollX: clickData.scrollX || 0,
     scrollY: clickData.scrollY || 0,
     annotation: '',
-    zoomLevel: 1.5,
+    zoomLevel: 1,
     elementText: clickData.elementText || '',
     elementTag: clickData.elementTag || '',
     elementSelector: clickData.elementSelector || '',
@@ -492,7 +567,7 @@ async function doStopRecording() {
   } catch {}
 
   const count = await getStepCount();
-  console.log(`Aceframe: doStopRecording — stepCount is ${count}`);
+  console.log(`Aceframe: doStopRecording - stepCount is ${count}`);
 
   if (count === 0) {
     console.log('Aceframe: No steps captured, not opening editor');
