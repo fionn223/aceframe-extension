@@ -5,8 +5,8 @@
 (function () {
   if (window.__aceframeCursorTracking) return;
   window.__aceframeCursorTracking = true;
-  window.__aceframeCursorTrack = [];
-  window.__aceframeVideoClicks = []; // click events for step splitting
+  if (!window.__aceframeCursorTrack) window.__aceframeCursorTrack = [];
+  if (!window.__aceframeVideoClicks) window.__aceframeVideoClicks = [];
 
   let startTime = null;
   let isRecording = false;
@@ -62,9 +62,7 @@
   }
 
   // ── Recording indicator with controls ──
-  // NOTE: This pill IS captured by tabCapture. It hides itself when inactive (opacity)
-  // and uses a minimal, unobtrusive design to minimize impact on the recording.
-  function createPill() {
+  function createPill(elapsedOffset) {
     const indicator = document.createElement('div');
     indicator.id = 'aceframe-video-indicator';
     indicator.innerHTML = `
@@ -150,6 +148,13 @@
     const cancelBtn = document.getElementById('aceframe-video-cancel');
     const timerLabel = document.getElementById('aceframe-video-timer');
 
+    // Show initial elapsed time if resuming after navigation
+    if (elapsedOffset > 0) {
+      const mins = Math.floor(elapsedOffset / 60);
+      const secs = elapsedOffset % 60;
+      timerLabel.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
     // Show pill fully on hover, fade when not hovered
     pill.addEventListener('mouseenter', () => { pill.style.opacity = '1'; });
     pill.addEventListener('mouseleave', () => { if (!isPillPaused) pill.style.opacity = '0.4'; });
@@ -200,8 +205,7 @@
       pill.style.transition = 'box-shadow 0.3s ease, background 0.25s ease, transform 0.25s ease, opacity 0.3s ease';
     });
 
-    // Pause/resume: freezes cursor/click tracking and timer, but MediaRecorder continues
-    // (MediaRecorder doesn't support pause well across all browsers, so we just stop tracking)
+    // Pause/resume
     let pausedAt = null;
     let pausedElapsed = 0;
     pauseBtn.addEventListener('click', (e) => {
@@ -304,9 +308,9 @@
     } catch {}
 
     window.__aceframeVideoClicks.push({
-      t,                                                    // ms from recording start
-      x: e.clientX / window.innerWidth,                     // 0-1 normalized
-      y: e.clientY / window.innerHeight,                    // 0-1 normalized
+      t,
+      x: e.clientX / window.innerWidth,
+      y: e.clientY / window.innerHeight,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       pageUrl: window.location.href,
@@ -362,14 +366,26 @@
   `;
   document.documentElement.appendChild(style);
 
-  // Show countdown, then start recording
+  // ── Check if recording already started (page navigation during recording) ──
   let pillElements = null;
 
-  showCountdown(() => {
-    isRecording = true;
-    startTime = Date.now();
-    pillElements = createPill();
-    chrome.runtime.sendMessage({ type: 'VIDEO_COUNTDOWN_DONE' });
+  chrome.storage.local.get('videoRecordingStartedAt', (result) => {
+    if (result.videoRecordingStartedAt) {
+      // Recording already in progress - skip countdown, just show pill
+      isRecording = true;
+      startTime = result.videoRecordingStartedAt;
+      const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
+      pillElements = createPill(elapsedSecs);
+      // No need to send VIDEO_COUNTDOWN_DONE - already sent on first page
+    } else {
+      // First injection - show countdown
+      showCountdown(() => {
+        isRecording = true;
+        startTime = Date.now();
+        pillElements = createPill(0);
+        chrome.runtime.sendMessage({ type: 'VIDEO_COUNTDOWN_DONE' });
+      });
+    }
   });
 
   chrome.runtime.onMessage.addListener((message) => {

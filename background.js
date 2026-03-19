@@ -180,14 +180,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await setCaptureMode('video');
           _videoRecordingTabId = message.tabId;
 
-          // Pre-create offscreen document and get stream ID while countdown runs
-          const streamId = await chrome.tabCapture.getMediaStreamId({
-            targetTabId: message.tabId,
-          });
+          // Pre-create offscreen document while countdown runs
           await ensureOffscreen();
-
-          // Store stream ID for when countdown completes
-          _pendingStreamId = streamId;
 
           // Inject cursor tracking + countdown into the tab
           await chrome.scripting.executeScript({
@@ -207,13 +201,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'VIDEO_COUNTDOWN_DONE':
       (async () => {
-        // Countdown finished in content script - now start actual MediaRecorder
-        if (_pendingStreamId) {
+        // Countdown finished - NOW get stream ID (fresh, within 5s expiry window)
+        try {
+          const streamId = await chrome.tabCapture.getMediaStreamId({
+            targetTabId: _videoRecordingTabId,
+          });
           _videoRecordingStartedAt = Date.now();
           await chrome.storage.local.set({ videoRecordingStartedAt: _videoRecordingStartedAt });
           chrome.runtime.sendMessage({
             type: 'OFFSCREEN_START_RECORDING',
-            streamId: _pendingStreamId,
+            streamId,
           }, (response) => {
             if (response && response.ok) {
               console.log('Aceframe: Video recording started (post-countdown)');
@@ -221,7 +218,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               console.error('Aceframe: Offscreen recording failed', response);
             }
           });
-          _pendingStreamId = null;
+        } catch (err) {
+          console.error('Aceframe: Failed to start recording after countdown', err);
         }
         sendResponse({ ok: true });
       })();
@@ -458,8 +456,16 @@ function getRecordingFiles() {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!_isRecordingCached || changeInfo.status !== 'complete') return;
-  // Don't re-inject video-cursor.js - it has its own guard and re-injection causes double countdown
-  if (_captureModeCached === 'video') return;
+  // For video mode: re-inject on the recording tab only (script checks storage to skip countdown)
+  if (_captureModeCached === 'video') {
+    if (tabId === _videoRecordingTabId) {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['video-cursor.js'],
+      }).catch(() => {});
+    }
+    return;
+  }
   chrome.scripting.executeScript({
     target: { tabId },
     files: getRecordingFiles()
