@@ -24,11 +24,14 @@ const recDot = document.getElementById('rec-dot');
 const stepCountEl = document.getElementById('step-count');
 const progressFill = document.getElementById('progress-fill');
 const videoTimerEl = document.getElementById('video-timer');
+const workspaceSelector = document.getElementById('workspace-selector');
+const workspaceSelect = document.getElementById('workspace-select');
 
 let isPaused = false;
 let appUrl = 'https://aceframe.ai';
 let videoTimerInterval = null;
 let videoStartTime = null;
+let selectedWorkspaceId = null;
 
 // ── Initialization ──
 
@@ -79,6 +82,42 @@ async function init() {
   });
 }
 
+async function fetchWorkspaces() {
+  try {
+    const res = await fetch(`${appUrl}/api/workspaces`, {
+      credentials: 'include',
+      signal: AbortSignal.timeout(3000)
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const workspaces = data.workspaces || [];
+    if (workspaces.length > 1) {
+      workspaceSelect.innerHTML = '';
+      workspaces.forEach(ws => {
+        const opt = document.createElement('option');
+        opt.value = ws.id;
+        opt.textContent = ws.name;
+        workspaceSelect.appendChild(opt);
+      });
+      // Restore last selected workspace
+      const stored = await chrome.storage.local.get('selectedWorkspaceId');
+      if (stored.selectedWorkspaceId && workspaces.some(ws => ws.id === stored.selectedWorkspaceId)) {
+        workspaceSelect.value = stored.selectedWorkspaceId;
+        selectedWorkspaceId = stored.selectedWorkspaceId;
+      } else {
+        selectedWorkspaceId = workspaces[0]?.id || null;
+      }
+      workspaceSelector.style.display = 'block';
+      workspaceSelect.addEventListener('change', () => {
+        selectedWorkspaceId = workspaceSelect.value;
+        chrome.storage.local.set({ selectedWorkspaceId });
+      });
+    }
+  } catch {
+    // Non-critical - workspace selector just won't show
+  }
+}
+
 async function checkAuth() {
   try {
     const response = await fetch(`${appUrl}/api/auth/session`, {
@@ -89,12 +128,14 @@ async function checkAuth() {
       const session = await response.json();
       if (session && session.user) {
         showState('idle');
+        fetchWorkspaces();
       } else {
         showState('signin');
       }
     } else {
       // Non-OK response - assume signed in to avoid blocking
       showState('idle');
+      fetchWorkspaces();
     }
   } catch (e) {
     // Fetch failed (CORS, network, timeout) - assume signed in
@@ -194,7 +235,7 @@ btnStart.addEventListener('click', async () => {
       files: ['content.js']
     });
 
-    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: tab.id });
+    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: tab.id, workspaceId: selectedWorkspaceId });
     showState('recording');
     stepCountEl.textContent = '0';
   } catch (err) {
@@ -228,7 +269,7 @@ btnHtml.addEventListener('click', async () => {
       files: ['html-capture.js']
     });
 
-    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: tab.id, captureMode: 'html' });
+    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: tab.id, captureMode: 'html', workspaceId: selectedWorkspaceId });
     showState('recording');
     stepCountEl.textContent = '0';
   } catch (err) {
