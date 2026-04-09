@@ -165,10 +165,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await setRecording(true);
         await setPaused(false);
         await setCaptureMode(message.captureMode || 'screenshot');
-        if (message.workspaceId) {
-          await chrome.storage.local.set({ recordingWorkspaceId: message.workspaceId });
-        }
-        console.log('Aceframe: Recording started (mode: ' + (message.captureMode || 'screenshot') + ', workspace: ' + (message.workspaceId || 'default') + ')');
+        console.log('Aceframe: Recording started (mode: ' + (message.captureMode || 'screenshot') + ')');
         sendResponse({ ok: true });
       })();
       return true;
@@ -600,14 +597,6 @@ async function doStopRecording() {
     if (mode === 'html') {
       urlParams.set('captureMode', 'html');
     }
-    // Pass workspace ID if one was selected
-    try {
-      const wsData = await chrome.storage.local.get('recordingWorkspaceId');
-      if (wsData.recordingWorkspaceId) {
-        urlParams.set('ws', wsData.recordingWorkspaceId);
-        await chrome.storage.local.remove('recordingWorkspaceId');
-      }
-    } catch {}
     const url = `${appUrl}/new?${urlParams.toString()}`;
     console.log(`Aceframe: Opening ${url}`);
     await chrome.tabs.create({ url });
