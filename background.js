@@ -3,9 +3,12 @@
 // Each screenshot stored as a separate key to avoid per-call size limits.
 // Requires "unlimitedStorage" permission in manifest.
 
-const DEFAULT_APP_URL = 'https://aceframe.ai';
+const DEFAULT_APP_URL = 'https://www.aceframe.ai';
 
-// In-memory cache to avoid storage reads on every tab event
+// In-memory cache to avoid storage reads on every tab event.
+// MV3 kills idle service workers, so every cached value MUST also live in
+// chrome.storage and be rehydrated on wake (rehydrateState below) — otherwise
+// recording silently stops capturing after the first idle-kill.
 let _isRecordingCached = false;
 let _captureModeCached = 'screenshot';
 // Track last HTML snapshot URL for same-page deduplication
@@ -15,6 +18,34 @@ let _lastHtmlSnapshotIndex = -1;
 let _videoRecordingTabId = null;
 let _pendingStreamId = null;
 let _videoRecordingStartedAt = null; // timestamp when actual recording started (post-countdown)
+
+async function rehydrateState() {
+  try {
+    const s = await chrome.storage.local.get([
+      'recording', 'captureMode', 'videoRecordingTabId', 'videoRecordingStartedAt',
+      'lastHtmlSnapshotPageUrl', 'lastHtmlSnapshotIndex',
+    ]);
+    _isRecordingCached = s.recording || false;
+    _captureModeCached = s.captureMode || 'screenshot';
+    _videoRecordingTabId = s.videoRecordingTabId ?? null;
+    _videoRecordingStartedAt = s.videoRecordingStartedAt ?? null;
+    _lastHtmlSnapshotPageUrl = s.lastHtmlSnapshotPageUrl ?? null;
+    _lastHtmlSnapshotIndex = s.lastHtmlSnapshotIndex ?? -1;
+  } catch (err) {
+    console.error('Aceframe: Failed to rehydrate state', err);
+  }
+}
+// Runs on every service worker start (fresh install AND idle-kill wake)
+const _stateReady = rehydrateState();
+
+async function setVideoRecordingTabId(tabId) {
+  _videoRecordingTabId = tabId;
+  if (tabId === null) {
+    await chrome.storage.local.remove('videoRecordingTabId');
+  } else {
+    await chrome.storage.local.set({ videoRecordingTabId: tabId });
+  }
+}
 
 async function getAppUrl() {
   try {
@@ -99,7 +130,7 @@ async function addHtmlStep(snapshot) {
 async function clearSteps() {
   const count = await getStepCount();
   const htmlCount = await getHtmlStepCount();
-  const keys = ['stepCount', 'pendingStepCount', 'htmlStepCount', 'pendingHtmlStepCount', 'captureMode', 'paused', 'videoData', 'videoDuration', 'cursorTrack', 'videoRecordingStartedAt'];
+  const keys = ['stepCount', 'pendingStepCount', 'htmlStepCount', 'pendingHtmlStepCount', 'captureMode', 'paused', 'videoData', 'videoDuration', 'cursorTrack', 'videoRecordingStartedAt', 'pendingVideoStep', 'videoRecordingTabId', 'lastHtmlSnapshotPageUrl', 'lastHtmlSnapshotIndex'];
   for (let i = 0; i < count + 5; i++) {
     keys.push(`step_${i}`);
   }
@@ -178,7 +209,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await setRecording(true);
           await setPaused(false);
           await setCaptureMode('video');
-          _videoRecordingTabId = message.tabId;
+          await setVideoRecordingTabId(message.tabId);
 
           // Pre-create offscreen document while countdown runs
           await ensureOffscreen();
@@ -201,6 +232,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'VIDEO_COUNTDOWN_DONE':
       (async () => {
+        await _stateReady;
         // Countdown finished - NOW get stream ID (fresh, within 5s expiry window)
         try {
           const streamId = await chrome.tabCapture.getMediaStreamId({
@@ -227,6 +259,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'STOP_VIDEO_RECORDING':
       (async () => {
+        await _stateReady;
         console.log('Aceframe: Stopping video recording...');
         try {
           // Stop cursor tracking in the tab
@@ -296,13 +329,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const url = `${appUrl}/new?source=extension&captureMode=video`;
           await chrome.tabs.create({ url });
 
-          _videoRecordingTabId = null;
+          await setVideoRecordingTabId(null);
           sendResponse({ ok: true });
         } catch (err) {
           console.error('Aceframe: Failed to stop video recording', err);
           await setRecording(false);
           await closeOffscreen();
-          _videoRecordingTabId = null;
+          await setVideoRecordingTabId(null);
           sendResponse({ ok: false, error: err.message });
         }
       })();
@@ -310,6 +343,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'CANCEL_VIDEO_RECORDING':
       (async () => {
+        await _stateReady;
         console.log('Aceframe: Cancelling video recording...');
         try {
           if (_videoRecordingTabId) {
@@ -321,7 +355,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await setRecording(false);
         await setPaused(false);
         await clearSteps();
-        _videoRecordingTabId = null;
+        await setVideoRecordingTabId(null);
         _pendingStreamId = null;
         _videoRecordingStartedAt = null;
         await chrome.storage.local.remove('videoRecordingStartedAt');
@@ -418,6 +452,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const newIndex = (await getHtmlStepCount()) - 1;
                 _lastHtmlSnapshotPageUrl = pageUrl;
                 _lastHtmlSnapshotIndex = newIndex;
+                await chrome.storage.local.set({ lastHtmlSnapshotPageUrl: pageUrl, lastHtmlSnapshotIndex: newIndex });
               }
             } catch (htmlErr) {
               console.error('Aceframe: HTML capture failed (screenshot still saved):', htmlErr);
@@ -454,7 +489,8 @@ function getRecordingFiles() {
   return files;
 }
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  await _stateReady; // caches are stale until rehydration after an SW idle-kill
   if (!_isRecordingCached || changeInfo.status !== 'complete') return;
   // For video mode: re-inject on the recording tab only (script checks storage to skip countdown)
   if (_captureModeCached === 'video') {
@@ -472,7 +508,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }).catch(() => {});
 });
 
-chrome.tabs.onCreated.addListener((tab) => {
+chrome.tabs.onCreated.addListener(async (tab) => {
+  await _stateReady;
   if (!_isRecordingCached) return;
   if (_captureModeCached === 'video') return;
   if (tab.id && tab.status === 'complete') {
@@ -483,7 +520,8 @@ chrome.tabs.onCreated.addListener((tab) => {
   }
 });
 
-chrome.tabs.onActivated.addListener(({ tabId }) => {
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  await _stateReady;
   if (!_isRecordingCached) return;
   if (_captureModeCached === 'video') return;
   chrome.scripting.executeScript({
