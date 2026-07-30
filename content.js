@@ -330,7 +330,11 @@
     // Hide indicator so it doesn't appear in screenshot
     indicator.style.visibility = 'hidden';
 
-    requestAnimationFrame(() => {
+    // Double rAF: the first callback runs before the hidden state is painted,
+    // so a single rAF lets captureVisibleTab grab a frame with the pill still
+    // visible on slow pages. The second fires only after a pill-less frame
+    // has been composited.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       chrome.runtime.sendMessage(
         { type: 'CAPTURE_CLICK', data: clickData },
         () => {
@@ -349,7 +353,7 @@
           replaying = false;
         }
       );
-    });
+    }));
   }
 
   function showClickFeedback(x, y) {
