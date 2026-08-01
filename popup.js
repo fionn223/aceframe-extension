@@ -55,6 +55,7 @@ async function init() {
       } else {
         showState('recording');
         stepCountEl.textContent = response.stepCount;
+        updateRecHint(response.stepCount);
         if (response.paused) {
           setPausedUI(true);
         }
@@ -87,6 +88,7 @@ async function checkAuth() {
     if (response.ok) {
       const session = await response.json();
       if (session && session.user) {
+        updateFooterBrand(session.user.email || null);
         showState('idle');
       } else {
         showState('signin');
@@ -98,6 +100,19 @@ async function checkAuth() {
   } catch (e) {
     // Fetch failed (CORS, network, timeout) - assume signed in
     showState('idle');
+  }
+}
+
+function updateFooterBrand(email) {
+  const el = document.getElementById('footer-brand');
+  if (!el) return;
+  const version = `v${chrome.runtime.getManifest().version}`;
+  if (email) {
+    const shown = email.length > 22 ? email.slice(0, 20) + '…' : email;
+    el.textContent = `${shown} · ${version}`;
+    el.title = email;
+  } else {
+    el.textContent = `Aceframe · ${version}`;
   }
 }
 
@@ -135,8 +150,15 @@ function showState(state) {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'STEP_CAPTURED') {
     stepCountEl.textContent = message.stepCount;
+    updateRecHint(message.stepCount);
   }
 });
+
+// First-recording guidance: visible until the first step lands
+function updateRecHint(count) {
+  const hint = document.getElementById('rec-hint');
+  if (hint) hint.style.display = Number(count) > 0 ? 'none' : 'block';
+}
 
 // ── Welcome ──
 

@@ -413,6 +413,25 @@
       background: #FEF2F2;
       border-radius: 8px;
     }
+
+    /* ── Dark mode ── */
+    @media (prefers-color-scheme: dark) {
+      body { background: #0B0F19; color: #F9FAFB; }
+      .header h1 { color: #F9FAFB; }
+      .welcome-card p, .signin-card > p { color: #9CA3AF; }
+      .secondary-option { background: #111827; border-color: #1F2937; color: #D1D5DB; }
+      .secondary-option:hover { background: #1F2937; border-color: #374151; }
+      .secondary-option:active { background: #374151; }
+      .secondary-option svg { color: #9CA3AF; }
+      .btn-pause { background: #1F2937; color: #E5E7EB; border-color: #374151; }
+      .btn-pause:hover { background: #374151; }
+      .btn-dark { background: #F9FAFB; color: #111827; }
+      .btn-dark:hover { background: #E5E7EB; }
+      .progress-bar { background: #1F2937; }
+      .footer { border-top-color: #1F2937; }
+      .footer .brand { color: #4B5563; }
+      .error-msg { background: rgba(239, 68, 68, 0.12); }
+    }
   </style>
 </head>
 <body>
@@ -484,7 +503,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>
           </svg>
-          HTML
+          HTML Capture
         </button>
       </div>
     </div>
@@ -512,6 +531,7 @@
         <button id="btn-stop" class="btn-dark">Stop & Edit</button>
       </div>
       <button id="btn-cancel" class="btn-ghost">Cancel recording</button>
+      <p class="hint" id="rec-hint">Click through your product - every click is captured as a step. When you finish, Stop &amp; Edit opens the editor.</p>
     </div>
   </div>
 
@@ -540,7 +560,7 @@
   <!-- Footer (visible in idle/signin states) -->
   <div class="footer" id="popup-footer">
     <a href="#" id="btn-dashboard">Open Dashboard</a>
-    <span class="brand">Aceframe</span>
+    <span class="brand" id="footer-brand">Aceframe</span>
   </div>
 
   <script src="popup.js"></script>
